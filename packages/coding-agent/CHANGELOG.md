@@ -98,6 +98,7 @@
 ### Removed
 
 - Removed the web search provider picker from `omp setup`; set the `web` model role (or keep the free default chain) instead.
+- Per-spawn `model` on `task` items and flat calls, eval `agent(model=)` and `workpool(model=)`: `@alias[:effort]` or `provider/id[:effort]`, controlled by `task.spawnModel` (default `true`) and `task.spawnModelAliases`. Precedence is spawn `model` > `task.agentModelOverrides` > agent frontmatter `model` > parent; a suffix cannot be combined with `effort` or exceed `task.maxEffort`, and an unresolvable model fails preflight with no parent-model fallback.
 
 ## [18.4.2] - 2026-09-28
 

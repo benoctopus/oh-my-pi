@@ -50,7 +50,7 @@ Parsing comes from frontmatter via `parseAgentFields()` (`src/discovery/helpers.
 
 OMP discovers user agents from `~/.omp/agent/agents/*.md` and project agents from `.omp/agents/*.md`.
 
-Give the agent a role alias in frontmatter, then dispatch it by name. For model routing, task dispatch sets only `agent`; it does not set a worker model:
+Give the agent a role alias in frontmatter, then dispatch it by name. For model routing, dispatching by `agent` alone does not set a worker model (a per-spawn `model` can; see [Spawn-level model](#spawn-level-model)):
 
 `~/.omp/agent/agents/reviewer.md`:
 
@@ -85,6 +85,17 @@ For a dispatch, set the agent name and task:
 ```
 
 `/model`'s Roles view can assign and persist custom role mappings such as `review`, `fast`, and `good`. Changing only the active or default session selection does not remap those roles.
+
+## Spawn-level model
+
+The `task` tool (per item in batch shape, top-level in flat shape), eval `agent(model=)` and `workpool(model=)` accept one optional `model` string that replaces the model and effort of that spawn only. The agent still supplies its system prompt, tools, spawns, output schema, advisor and prewalk. Precedence is spawn `model` > `task.agentModelOverrides` > agent frontmatter `model` > parent model.
+
+- Value: `@<alias>[:<effort>]` or a concrete `provider/id[:<effort>]`. Arrays and empty strings are schema errors; fallback chains remain `retry.fallbackChains`.
+- `@alias` is accepted only for roles listed in `task.spawnModelAliases`; the role's `modelRoles` value supplies the model, and its own `:effort` suffix is kept unless the spawn supplies one. Concrete selectors are matched exactly against the available catalog (whole selector first, then split at a trailing `:effort`).
+- Effort: a suffix wins over the agent's `thinkingLevel` (including `auto`); without a suffix the agent's configured level applies. A suffix together with the coarse `effort` field is rejected (`Set effort either as a model suffix or via "effort", not both.`). A suffix above `task.maxEffort` is rejected (`Effort "<level>" exceeds task.maxEffort ("<maxEffort>").`), and the `task.maxEffort` ceiling also carries across retry-fallback model switches. Effort the resolved model lacks is rejected.
+- No parent-auth fallback: an explicit spawn `model` that cannot resolve fails preflight; it never falls back to the parent model.
+- Preflight errors (no agent id, artifact lease or subprocess): `Unknown model alias "@<alias>". Available: …`, `Model alias "@<alias>" resolves to no available model (…).`, `Unknown model "<selector>".`, `<model.id> does not support effort "<level>". Supported: ….`, `Spawn model selection is disabled (task.spawnModel).`, `Spawn model selection needs a model registry.`
+- `task.spawnModel=false` removes the field from the schema and description and makes `agent()`/`workpool()` reject `model`.
 
 ## User-tagged model agents
 
@@ -214,11 +225,12 @@ A missing name fails preflight with `Unknown agent "...". Available: ...`; no su
 
 For task dispatch, model precedence is:
 
+0. the spawn-level `model` (task item / flat call `model`, eval `agent(model=)`, `workpool(model=)`); see [Spawn-level model](#spawn-level-model)
 1. `task.agentModelOverrides[agentName]`
 2. the agent frontmatter's prioritized `model` list
 3. the parent's active model, then its configured/default model fallback
 
-Role aliases in either of the first two sources are expanded through `modelRoles`. The shared eval bridge can also supply an invocation-local model override ahead of the settings override; the task wire schema does not expose that field.
+Role aliases in the first three sources are expanded through `modelRoles`. A `before_subagent_spawn` hook runs after this resolution and can still replace the model.
 
 The `Alt+P` task model pick is session-only; saving a model in `/agents` replaces that runtime selection for the current session and persists the new value for future sessions.
 

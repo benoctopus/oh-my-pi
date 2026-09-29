@@ -127,7 +127,7 @@ describe("runEvalWorkpool", () => {
 
 		const created = await runEvalWorkpool({ op: "create", agent: "scout", model: "@sonnet" }, { session });
 		expect(policySpy.mock.calls[0]?.[0].spawnModel).toBe("@sonnet");
-		await runEvalWorkpool({ op: "push", name: created.name, items: ["a"] }, { session });
+		await runEvalWorkpool({ op: "push", name: (created as { name: string }).name, items: ["a"] }, { session });
 		await dispatched.promise;
 		expect(runSpy.mock.calls[0]?.[0].spawnModel).toBe("@sonnet");
 	});

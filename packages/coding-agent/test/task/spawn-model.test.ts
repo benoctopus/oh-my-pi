@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import type { Model } from "@oh-my-pi/pi-ai";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
+import { Effort } from "@oh-my-pi/pi-catalog/effort";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
@@ -29,7 +30,7 @@ const glmModel = buildModel({
 	provider: "zai",
 	baseUrl: "https://example.com",
 	reasoning: true,
-	thinking: { mode: "anthropic-budget-effort", efforts: ["low", "high", "max"] },
+	thinking: { mode: "anthropic-budget-effort", efforts: [Effort.Low, Effort.High, Effort.Max] },
 	input: ["text"],
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	contextWindow: 128_000,
@@ -67,12 +68,12 @@ describe("resolveSpawnModel", () => {
 	it('resolves "@sonnet:high" to the sonnet model with effort high', () => {
 		const result = resolveSpawnModel("@sonnet:high", ctx(fixture()));
 		expect(result.model.id).toBe(sonnetModel.id);
-		expect(result.effort).toBe("high");
+		expect(result.effort).toBe(Effort.High);
 		expect(result.patterns[0]).toBe(`${sonnetString}:high`);
 	});
 
 	it("resolves a max suffix", () => {
-		expect(resolveSpawnModel("@sonnet:max", ctx(fixture())).effort).toBe("max");
+		expect(resolveSpawnModel("@sonnet:max", ctx(fixture())).effort).toBe(Effort.Max);
 	});
 
 	it('resolves "@sonnet" without effort', () => {
@@ -83,14 +84,14 @@ describe("resolveSpawnModel", () => {
 
 	it("lets the spawn suffix beat a suffixed role value", () => {
 		const result = resolveSpawnModel("@sol:low", ctx(fixture({}, { sol: `${solString}:high` })));
-		expect(result.effort).toBe("low");
+		expect(result.effort).toBe(Effort.Low);
 		expect(result.patterns[0]).toBe(`${solString}:low`);
 	});
 
 	it("resolves an exact concrete selector", () => {
 		const result = resolveSpawnModel(`${sonnetString}:medium`, ctx(fixture()));
 		expect(result.model.id).toBe(sonnetModel.id);
-		expect(result.effort).toBe("medium");
+		expect(result.effort).toBe(Effort.Medium);
 		expect(result.patterns).toEqual([`${sonnetString}:medium`]);
 	});
 
@@ -162,8 +163,8 @@ describe("spawn model alias groups", () => {
 	it("groups aliases by effort set in configured order and omits unresolvable ones", () => {
 		const f = fixture({ "task.spawnModelAliases": ["sonnet", "glm", "sol", "ghost"] });
 		expect(buildSpawnModelAliasGroups(f.settings, f.modelRegistry)).toEqual([
-			{ aliases: ["sonnet", "sol"], efforts: ["low", "medium", "high", "xhigh", "max"] },
-			{ aliases: ["glm"], efforts: ["low", "high", "max"] },
+			{ aliases: ["sonnet", "sol"], efforts: [Effort.Low, Effort.Medium, Effort.High, Effort.XHigh, Effort.Max] },
+			{ aliases: ["glm"], efforts: [Effort.Low, Effort.High, Effort.Max] },
 		]);
 	});
 
