@@ -94,6 +94,33 @@ describe("resolveSpawnModel", () => {
 		expect(result.patterns).toEqual([`${sonnetString}:medium`]);
 	});
 
+	it("preserves a suffixed role value when the spawn selector has no suffix", () => {
+		const result = resolveSpawnModel("@sonnet", ctx(fixture({}, { sonnet: `${sonnetString}:high` })));
+		expect(result.patterns).toEqual([`${sonnetString}:high`]);
+		expect(result.effort).toBeUndefined();
+	});
+
+	it("matches a model whose id ends in an effort-like suffix exactly", () => {
+		const custom = buildModel({
+			id: "custom:high",
+			name: "Custom",
+			api: "openai-completions",
+			provider: "anthropic",
+			baseUrl: "https://example.com",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 128_000,
+			maxTokens: 4096,
+		}) as Model;
+		const f = fixture();
+		f.modelRegistry = createRegistry([custom]);
+		const result = resolveSpawnModel("anthropic/custom:high", ctx(f));
+		expect(result.model.id).toBe("custom:high");
+		expect(result.effort).toBeUndefined();
+		expect(result.patterns).toEqual(["anthropic/custom:high"]);
+	});
+
 	const unknownAlias = 'Unknown model alias "@%s". Available: @sonnet, @glm, @sol';
 	it.each([
 		["@solx", {}, {}, undefined, unknownAlias.replace("%s", "solx")],

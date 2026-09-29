@@ -41,12 +41,11 @@ export interface SpawnModelAliasGroup {
 	efforts: readonly Effort[];
 }
 
-/** Expand `@role` to its configured patterns, dropping any suffix the role value carries and applying `level`. */
+/** Expand `@role` to its configured patterns; an explicit spawn `level` replaces any suffix the role value carries. */
 function expandAliasPatterns(role: string, level: string | undefined, settings: Settings): string[] {
-	const patterns = resolveConfiguredModelPatterns(`${ALIAS_PREFIX}${role}`, settings).map(
-		pattern => splitThinkingSuffix(pattern, -1, MAX_THINKING_SUFFIX_OPTIONS).base,
-	);
-	return level ? patterns.map(pattern => `${pattern}:${level}`) : patterns;
+	const patterns = resolveConfiguredModelPatterns(`${ALIAS_PREFIX}${role}`, settings);
+	if (!level) return patterns;
+	return patterns.map(pattern => `${splitThinkingSuffix(pattern, -1, MAX_THINKING_SUFFIX_OPTIONS).base}:${level}`);
 }
 
 function resolveAliasModel(
@@ -74,28 +73,35 @@ export function resolveSpawnModel(selector: string, ctx: SpawnModelContext): Spa
 
 	const trimmed = selector.trim();
 	const isAlias = trimmed.startsWith(ALIAS_PREFIX);
-	const { base, level } = splitThinkingSuffix(
-		trimmed,
-		isAlias ? ALIAS_PREFIX.length : -1,
-		MAX_THINKING_SUFFIX_OPTIONS,
-	);
+	const available = isAlias ? [] : modelRegistry.getAvailable();
+	// A model id may itself end in something that looks like an effort suffix; the whole selector wins.
+	const exact = isAlias ? undefined : available.find(candidate => formatModelString(candidate) === trimmed);
 
 	let patterns: string[];
 	let model: Model<Api>;
-	if (isAlias) {
-		const role = base.slice(ALIAS_PREFIX.length);
-		const aliases = cfgTaskSpawnModelAliases.get(settings);
-		if (!aliases.includes(role)) {
-			throw new SpawnModelError(
-				`Unknown model alias "${base}". Available: ${aliases.map(alias => `${ALIAS_PREFIX}${alias}`).join(", ")}`,
-			);
-		}
-		({ patterns, model } = resolveAliasModel(role, level, settings, modelRegistry));
-	} else {
-		const found = modelRegistry.getAvailable().find(candidate => formatModelString(candidate) === base);
-		if (!found) throw new SpawnModelError(`Unknown model "${base}".`);
-		model = found;
+	let level: string | undefined;
+	if (exact) {
+		model = exact;
 		patterns = [trimmed];
+	} else {
+		const split = splitThinkingSuffix(trimmed, isAlias ? ALIAS_PREFIX.length : -1, MAX_THINKING_SUFFIX_OPTIONS);
+		const base = split.base;
+		level = split.level;
+		if (isAlias) {
+			const role = base.slice(ALIAS_PREFIX.length);
+			const aliases = cfgTaskSpawnModelAliases.get(settings);
+			if (!aliases.includes(role)) {
+				throw new SpawnModelError(
+					`Unknown model alias "${base}". Available: ${aliases.map(alias => `${ALIAS_PREFIX}${alias}`).join(", ")}`,
+				);
+			}
+			({ patterns, model } = resolveAliasModel(role, level, settings, modelRegistry));
+		} else {
+			const found = available.find(candidate => formatModelString(candidate) === base);
+			if (!found) throw new SpawnModelError(`Unknown model "${base}".`);
+			model = found;
+			patterns = [trimmed];
+		}
 	}
 
 	let effort: Effort | undefined;
