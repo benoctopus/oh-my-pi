@@ -52,7 +52,7 @@ Status: approved in brainstorming; pending written-spec review
 1. Suffix on `model` (e.g. `:high`) wins over the agent's `thinkingLevel`, including the bundled `task` agent's `auto`.
 2. No suffix: the agent's configured `thinkingLevel` applies, as today.
 3. Suffix **and** coarse `effort` on the same spawn: rejected (see 3.4).
-4. `task.maxEffort` still clamps as today.
+4. `task.maxEffort` applies to suffix effort too. Today the ceiling is only armed when coarse `effort` is set (`src/task/executor.ts`, `spawnEffortCeiling`), so a suffix would bypass it. For a spawn `model` with a suffix: a suffix above `task.maxEffort` fails preflight (no silent clamp, see 3.4), and `spawnEffortCeiling` is set to `task.maxEffort` so retry-fallback model switches cannot raise effort past it. A spawn `model` without a suffix keeps today's ceiling behaviour.
 
 **Hooks**: `before_subagent_spawn` runs after this resolution and may still replace the model; existing routing extensions keep working.
 
@@ -96,6 +96,7 @@ All of these fail **preflight** (inside `resolveEffectiveSubagentPolicy`, before
 | Concrete selector not in the available catalog | `Unknown model "<selector>".` |
 | Effort not supported by the resolved model | `glm-5.3 does not support effort "medium". Supported: low, high, max.` |
 | Suffix and `effort` both set | `Set effort either as a model suffix or via "effort", not both.` |
+| Suffix effort above `task.maxEffort` | `Effort "max" exceeds task.maxEffort ("high").` |
 | `model` set while `task.spawnModel` is `false` | `Spawn model selection is disabled (task.spawnModel).` |
 | `model` is an array or empty string | schema validation error |
 
@@ -135,7 +136,7 @@ Performed only after the forked `omp` passes the smoke test in 4.2.
 ### 4.1 Tests (fork, existing suite conventions)
 
 1. Spawn `model` beats `task.agentModelOverrides` and frontmatter `model`; the child keeps the agent's prompt and tools.
-2. A suffix effort overrides the agent's `auto`; without a suffix the agent's `thinkingLevel` applies.
+2. A suffix effort overrides the agent's `auto`; without a suffix the agent's `thinkingLevel` applies. A suffix above `task.maxEffort` is refused, and a suffix spawn whose model fails over via `retry.fallbackChains` never runs above `task.maxEffort`.
 3. Each 3.4 condition fails preflight and no subprocess or agent id is created.
 4. Eval `agent(model=)` and `workpool(model=)` resolve identically to `task`.
 5. The rendered `model` section lists exactly `task.spawnModelAliases` with catalog efforts, and is byte-stable across turns within a session.
