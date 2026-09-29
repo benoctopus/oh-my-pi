@@ -62,6 +62,7 @@ const host: SessionToolsHost = {
 	localProtocolOptions: () => ({}),
 	evalPreludes: () => [],
 	sessionAgents: () => [],
+	spawnModelAliasTable: () => "",
 };
 const sessionTools = new SessionTools(host, {
 	baseSystemPrompt: [],
