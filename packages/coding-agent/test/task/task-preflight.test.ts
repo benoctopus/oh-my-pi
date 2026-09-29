@@ -1,4 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import type { Model } from "@oh-my-pi/pi-ai";
+import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
+import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
+import * as structuredModule from "@oh-my-pi/pi-coding-agent/task/structured-subagent";
+import { createInMemoryAuthStorage } from "../helpers/agent-session-setup";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -25,6 +30,7 @@ function createSession(options: {
 	settings?: Record<string, unknown>;
 	spawns?: string | boolean;
 	cwd?: string;
+	modelRegistry?: ModelRegistry;
 }): ToolSession {
 	return {
 		cwd: options.cwd ?? "/tmp",
@@ -33,6 +39,7 @@ function createSession(options: {
 		getSessionFile: () => null,
 		getSessionSpawns: () => options.spawns ?? "*",
 		asyncJobManager: options.manager,
+		modelRegistry: options.modelRegistry,
 	} as unknown as ToolSession;
 }
 
@@ -186,5 +193,87 @@ describe("task async preflight", () => {
 		} finally {
 			await fs.rm(home, { recursive: true, force: true });
 		}
+	});
+
+	describe("spawn model", () => {
+		const opusModel = getBundledModel("anthropic", "claude-opus-4-7" as never) as Model;
+		const opusString = `${opusModel.provider}/${opusModel.id}`;
+
+		function modelSession(jobs: AsyncJobManager, settings?: Record<string, unknown>): ToolSession {
+			const modelRegistry = new ModelRegistry(createInMemoryAuthStorage(), "/nonexistent/spawn-model-models.yml");
+			vi.spyOn(modelRegistry, "getAvailable").mockReturnValue([opusModel]);
+			return createSession({
+				manager: jobs,
+				modelRegistry,
+				settings: {
+					"task.spawnModelAliases": ["sonnet"],
+					modelRoles: { sonnet: opusString },
+					...settings,
+				},
+			});
+		}
+
+		it("rejects an unknown spawn model before spawning", async () => {
+			mockDiscovery();
+			const runSubprocess = vi.spyOn(executorModule, "runSubprocess").mockResolvedValue(resultFor("unexpected"));
+			const jobs = manager();
+			const register = vi.spyOn(jobs, "register");
+			const tool = await TaskTool.create(modelSession(jobs, { "task.batch": true }));
+
+			const result = await tool.execute("bad-model", {
+				context: "Shared context.",
+				tasks: [{ name: "Bad", agent: "task", task: "Work.", model: "@solx" }],
+			} as TaskParams);
+
+			expect(textOf(result)).toContain('Unknown model alias "@solx"');
+			expect(runSubprocess).not.toHaveBeenCalled();
+			expect(register).not.toHaveBeenCalled();
+		});
+
+		it("rejects the whole batch when one item has a bad model", async () => {
+			mockDiscovery();
+			const runSubprocess = vi.spyOn(executorModule, "runSubprocess").mockResolvedValue(resultFor("unexpected"));
+			const jobs = manager();
+			const register = vi.spyOn(jobs, "register");
+			const tool = await TaskTool.create(modelSession(jobs, { "task.batch": true }));
+
+			const result = await tool.execute("bad-batch", {
+				context: "Shared context.",
+				tasks: [
+					{ name: "Good", agent: "task", task: "Work.", model: "@sonnet" },
+					{ name: "Bad", agent: "task", task: "Work.", model: "@glm:medium" },
+				],
+			} as TaskParams);
+
+			expect(textOf(result)).toContain('Unknown model alias "@glm"');
+			expect(runSubprocess).not.toHaveBeenCalled();
+			expect(register).not.toHaveBeenCalled();
+			expect(jobs.getJob("Good")).toBeUndefined();
+		});
+
+		it.each([
+			{
+				shape: "batch",
+				settings: { "task.batch": true },
+				params: {
+					context: "Shared context.",
+					tasks: [{ name: "Worker", agent: "task", task: "Work.", model: "@sonnet:high" }],
+				},
+			},
+			{
+				shape: "flat",
+				settings: { "task.batch": false },
+				params: { name: "Worker", agent: "task", task: "Work.", model: "@sonnet:high" },
+			},
+		])("forwards model to the structured request ($shape)", async ({ settings, params }) => {
+			mockDiscovery();
+			const run = vi.spyOn(structuredModule, "runStructuredSubagent").mockRejectedValue(new Error("stop"));
+			const tool = await TaskTool.create(modelSession(manager(), { ...settings, "async.enabled": false }));
+
+			await tool.execute("forward", params as TaskParams);
+
+			expect(run).toHaveBeenCalledTimes(1);
+			expect(run.mock.calls[0][0].spawnModel).toBe("@sonnet:high");
+		});
 	});
 });
