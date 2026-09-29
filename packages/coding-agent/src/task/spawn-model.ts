@@ -8,7 +8,7 @@ import { getSupportedEfforts } from "@oh-my-pi/pi-catalog/model-thinking";
 import { MAX_THINKING_SUFFIX_OPTIONS, splitThinkingSuffix } from "@oh-my-pi/pi-tui/overlays/model-selector";
 import type { TaskEffort } from "@oh-my-pi/pi-tui/thinking";
 import type { ModelRegistry } from "../config/model-registry";
-import { formatModelString, resolveConfiguredModelPatterns, resolveModelOverride } from "../config/model-resolver";
+import { formatModelString, resolveConfiguredModelPatterns } from "../config/model-resolver";
 import type { Settings } from "../config/settings";
 import { cfgTaskMaxEffort, cfgTaskSpawnModel, cfgTaskSpawnModelAliases } from "./settings";
 
@@ -23,11 +23,13 @@ export class SpawnModelError extends Error {
 
 export interface SpawnModelSelection {
 	selector: string;
-	/** Expanded model patterns; the spawn's own effort suffix, if any, is the only suffix. */
+	/** Expanded model patterns. A spawn effort suffix replaces any role-value suffix; without one the role value's suffix is kept. */
 	patterns: string[];
 	model: Model<Api>;
 	/** The spawn selector's own effort suffix, if any. */
 	effort?: Effort;
+	/** Alias role name for `@alias` selectors; keys the child's `retry.fallbackChains`. Undefined for concrete selectors. */
+	role?: string;
 }
 
 export interface SpawnModelContext {
@@ -41,27 +43,32 @@ export interface SpawnModelAliasGroup {
 	efforts: readonly Effort[];
 }
 
-/** Expand `@role` to its configured patterns; an explicit spawn `level` replaces any suffix the role value carries. */
-function expandAliasPatterns(role: string, level: string | undefined, settings: Settings): string[] {
-	const patterns = resolveConfiguredModelPatterns(`${ALIAS_PREFIX}${role}`, settings);
-	if (!level) return patterns;
-	return patterns.map(pattern => `${splitThinkingSuffix(pattern, -1, MAX_THINKING_SUFFIX_OPTIONS).base}:${level}`);
-}
-
+/**
+ * Resolve `@role` to exactly one available model by exact match. The role must expand to a single pattern;
+ * a whole-pattern match wins (model ids may end in effort-like text), otherwise a trailing `:effort` is split off
+ * and the base matched. An explicit spawn `level` replaces any suffix the role value carries.
+ */
 function resolveAliasModel(
 	role: string,
 	level: string | undefined,
 	settings: Settings,
 	modelRegistry: ModelRegistry,
 ): { patterns: string[]; model: Model<Api> } {
-	const patterns = expandAliasPatterns(role, level, settings);
-	const model = resolveModelOverride(patterns, modelRegistry, settings).model;
-	if (!model) {
-		throw new SpawnModelError(
-			`Model alias "${ALIAS_PREFIX}${role}" resolves to no available model (${settings.getModelRole(role) ?? "unset"}).`,
-		);
+	const expanded = resolveConfiguredModelPatterns(`${ALIAS_PREFIX}${role}`, settings);
+	const pattern = expanded.length === 1 ? expanded[0] : undefined;
+	if (pattern !== undefined) {
+		const available = modelRegistry.getAvailable();
+		let base = pattern;
+		let model = available.find(candidate => formatModelString(candidate) === base);
+		if (!model) {
+			base = splitThinkingSuffix(pattern, -1, MAX_THINKING_SUFFIX_OPTIONS).base;
+			model = available.find(candidate => formatModelString(candidate) === base);
+		}
+		if (model) return { patterns: [level ? `${base}:${level}` : pattern], model };
 	}
-	return { patterns, model };
+	throw new SpawnModelError(
+		`Model alias "${ALIAS_PREFIX}${role}" resolves to no available model (${settings.getModelRole(role) ?? "unset"}).`,
+	);
 }
 
 export function resolveSpawnModel(selector: string, ctx: SpawnModelContext): SpawnModelSelection {
@@ -80,6 +87,7 @@ export function resolveSpawnModel(selector: string, ctx: SpawnModelContext): Spa
 	let patterns: string[];
 	let model: Model<Api>;
 	let level: string | undefined;
+	let role: string | undefined;
 	if (exact) {
 		model = exact;
 		patterns = [trimmed];
@@ -88,13 +96,14 @@ export function resolveSpawnModel(selector: string, ctx: SpawnModelContext): Spa
 		const base = split.base;
 		level = split.level;
 		if (isAlias) {
-			const role = base.slice(ALIAS_PREFIX.length);
+			const aliasRole = base.slice(ALIAS_PREFIX.length);
 			const aliases = cfgTaskSpawnModelAliases.get(settings);
-			if (!aliases.includes(role)) {
+			if (!aliases.includes(aliasRole)) {
 				throw new SpawnModelError(
 					`Unknown model alias "${base}". Available: ${aliases.map(alias => `${ALIAS_PREFIX}${alias}`).join(", ")}`,
 				);
 			}
+			role = aliasRole;
 			({ patterns, model } = resolveAliasModel(role, level, settings, modelRegistry));
 		} else {
 			const found = available.find(candidate => formatModelString(candidate) === base);
@@ -121,7 +130,7 @@ export function resolveSpawnModel(selector: string, ctx: SpawnModelContext): Spa
 			throw new SpawnModelError(`Effort "${effort}" exceeds task.maxEffort ("${maxEffort}").`);
 		}
 	}
-	return { selector: trimmed, patterns, model, effort };
+	return { selector: trimmed, patterns, model, effort, role };
 }
 
 /** Listed aliases that resolve to an available model, grouped by identical effort set in first-seen order. */

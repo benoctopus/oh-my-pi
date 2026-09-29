@@ -518,6 +518,18 @@ describe("structured subagent primitive", () => {
 		expect(policy.effectiveAgent.tools).toEqual(AGENT.tools);
 	});
 
+	it("spawn alias selects the alias role; a concrete selector selects none", async () => {
+		mockDiscovery();
+		const aliasPolicy = await resolveEffectiveSubagentPolicy(
+			request({ session: spawnModelSession(), spawnModel: "@sonnet:high" }),
+		);
+		expect(aliasPolicy.modelRole).toBe("sonnet");
+		const concretePolicy = await resolveEffectiveSubagentPolicy(
+			request({ session: spawnModelSession(), spawnModel: `${opusString}:high` }),
+		);
+		expect(concretePolicy.modelRole).toBeUndefined();
+	});
+
 	it("invalid spawn model fails preflight without running", async () => {
 		mockDiscovery();
 		const run = vi.spyOn(executorModule, "runSubprocess");

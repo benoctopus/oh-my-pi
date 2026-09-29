@@ -374,8 +374,10 @@ export async function resolveEffectiveSubagentPolicy(
 	};
 	// Role identity and patterns come from one call so they cannot be derived
 	// from different sources: the expansion below discards the alias, and the
-	// child's inherited retry-fallback chain is keyed off the role.
-	const { patterns: modelOverride, role: modelRole } = resolveAgentModelSelection(modelResolution);
+	// child's inherited retry-fallback chain is keyed off the role. A spawn
+	// `@alias` selector supplies its own role so `retry.fallbackChains.<alias>` applies.
+	const { patterns: modelOverride, role: resolvedRole } = resolveAgentModelSelection(modelResolution);
+	const modelRole = spawnModel ? spawnModel.role : resolvedRole;
 	const isolationEnabled = cfgTaskIsolationEnabled.get(request.session.settings);
 	const isIsolated = request.isolation?.requested === true;
 	if (isIsolated && !isolationEnabled) {

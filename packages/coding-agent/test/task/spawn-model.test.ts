@@ -153,6 +153,47 @@ describe("resolveSpawnModel", () => {
 		expect(run).toThrow(SpawnModelError);
 		expect(run).toThrow("Spawn model selection needs a model registry.");
 	});
+
+	it.each([
+		["fuzzy role value", { sol: "openai-codex/gpt-5.6-so" }, "openai-codex/gpt-5.6-so"],
+		[
+			"multi-pattern role value",
+			{ sol: `openai-codex/no-such-model, ${sonnetString}` },
+			`openai-codex/no-such-model, ${sonnetString}`,
+		],
+	])("rejects an alias whose target is not one exact available model: %s", (_name, roles, value) => {
+		const run = () => resolveSpawnModel("@sol", ctx(fixture({}, roles)));
+		expect(run).toThrow(SpawnModelError);
+		expect(run).toThrow(`Model alias "@sol" resolves to no available model (${value}).`);
+	});
+
+	it("keeps a literal effort-like model id when an alias applies a requested effort", () => {
+		const build = (id: string) =>
+			buildModel({
+				id,
+				name: id,
+				api: "openai-completions",
+				provider: "mock",
+				baseUrl: "https://example.com",
+				reasoning: true,
+				thinking: { mode: "anthropic-budget-effort", efforts: [Effort.Low, Effort.High] },
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 128_000,
+				maxTokens: 4096,
+			}) as Model;
+		const f = fixture({ "task.spawnModelAliases": ["literal"] }, { literal: "mock/custom:high" });
+		f.modelRegistry = createRegistry([build("custom"), build("custom:high")]);
+		const result = resolveSpawnModel("@literal:low", ctx(f));
+		expect(result.model.id).toBe("custom:high");
+		expect(result.effort).toBe(Effort.Low);
+		expect(result.patterns).toEqual(["mock/custom:high:low"]);
+	});
+
+	it("reports the alias role for alias selectors only", () => {
+		expect(resolveSpawnModel("@sonnet:high", ctx(fixture())).role).toBe("sonnet");
+		expect(resolveSpawnModel(`${sonnetString}:high`, ctx(fixture())).role).toBeUndefined();
+	});
 });
 
 describe("spawn model alias groups", () => {
@@ -175,5 +216,15 @@ describe("spawn model alias groups", () => {
 				{ aliases: ["glm"], efforts: ["low", "high", "max"] as never },
 			]),
 		).toBe("  @sonnet @sol  efforts: low medium high xhigh max\n  @glm  efforts: low high max");
+	});
+
+	it("omits aliases that only fuzzy-match or expand to several patterns", () => {
+		const f = fixture(
+			{ "task.spawnModelAliases": ["sonnet", "sol", "chain"] },
+			{ sol: "openai-codex/gpt-5.6-so", chain: `openai-codex/no-such-model, ${sonnetString}` },
+		);
+		expect(buildSpawnModelAliasGroups(f.settings, f.modelRegistry)).toEqual([
+			{ aliases: ["sonnet"], efforts: [Effort.Low, Effort.Medium, Effort.High, Effort.XHigh, Effort.Max] },
+		]);
 	});
 });
