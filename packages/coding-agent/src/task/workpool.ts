@@ -91,6 +91,7 @@ export interface WorkPoolCreateOptions {
 	policy: EffectiveSubagentPolicy;
 	context?: string;
 	customTools?: CustomTool[];
+	spawnModel?: string;
 }
 
 interface TurnOutcome {
@@ -111,6 +112,7 @@ export class WorkPool {
 	readonly policy: EffectiveSubagentPolicy;
 	readonly context?: string;
 	readonly customTools: CustomTool[];
+	readonly spawnModel?: string;
 	readonly freshAgents: boolean;
 	readonly agents: WorkPoolAgent[] = [];
 	readonly items: WorkPoolItem[] = [];
@@ -133,6 +135,7 @@ export class WorkPool {
 		this.policy = options.policy;
 		this.context = options.context;
 		this.customTools = options.customTools ?? [];
+		this.spawnModel = options.spawnModel;
 		this.freshAgents = cfgEvalWorkpoolFreshAgents.get(session.settings);
 		if (!session.asyncJobManager) {
 			throw new ToolError("workpool() needs the session's async job manager; unavailable here");
@@ -385,6 +388,7 @@ export class WorkPool {
 							agent: this.policy.agentName,
 							identity: { id: agent.id },
 							customTools: this.customTools,
+							...(this.spawnModel !== undefined ? { spawnModel: this.spawnModel } : {}),
 							outputSchema,
 							schemaMode: "strict",
 							workPoolYieldItems,
