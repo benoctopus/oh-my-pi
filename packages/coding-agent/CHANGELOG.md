@@ -6,6 +6,7 @@
 
 - RPC hosts can send `messageUpdates: "delta"` with `set_event_filter` to receive `message_update` frames without the accumulated message snapshots (`message` shrinks to `{ role }` and `assistantMessageEvent.partial` is omitted); the response echoes the active mode ([#13716](https://github.com/can1357/oh-my-pi/pull/13716) by [@alphastorm](https://github.com/alphastorm))
 - RPC hosts can follow each cache-warming refresh through `cache_warming_start` and `cache_warming_end` events (also written by `--mode json`), which report the outcome and the recorded usage, and can set the session's warming mode with `set_cache_warming` without changing `config.yml`; the Python client gains `set_cache_warming()` ([#13717](https://github.com/can1357/oh-my-pi/pull/13717) by [@alphastorm](https://github.com/alphastorm))
+- Per-spawn `model` on `task` items and flat calls, eval `agent(model=)` and `workpool(model=)`: `@alias[:effort]` or `provider/id[:effort]`, controlled by `task.spawnModel` (default `true`) and `task.spawnModelAliases`. Precedence is spawn `model` > `task.agentModelOverrides` > agent frontmatter `model` > parent; a suffix cannot be combined with `effort` or exceed `task.maxEffort`, and an unresolvable model fails preflight with no parent-model fallback.
 
 ### Changed
 
@@ -98,7 +99,6 @@
 ### Removed
 
 - Removed the web search provider picker from `omp setup`; set the `web` model role (or keep the free default chain) instead.
-- Per-spawn `model` on `task` items and flat calls, eval `agent(model=)` and `workpool(model=)`: `@alias[:effort]` or `provider/id[:effort]`, controlled by `task.spawnModel` (default `true`) and `task.spawnModelAliases`. Precedence is spawn `model` > `task.agentModelOverrides` > agent frontmatter `model` > parent; a suffix cannot be combined with `effort` or exceed `task.maxEffort`, and an unresolvable model fails preflight with no parent-model fallback.
 
 ## [18.4.2] - 2026-09-28
 
