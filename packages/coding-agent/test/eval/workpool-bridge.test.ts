@@ -1,4 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
+import type { Model } from "@oh-my-pi/pi-ai";
+import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
+import { ModelRegistry } from "../../src/config/model-registry";
+import * as structuredSubagent from "../../src/task/structured-subagent";
+import { createInMemoryAuthStorage } from "../helpers/agent-session-setup";
 import { AsyncJobManager } from "../../src/async";
 import { Settings } from "../../src/config/settings";
 import { runEvalWorkpool } from "../../src/eval/workpool-bridge";
@@ -34,6 +39,27 @@ function makeSession(): ToolSession {
 		getSessionFile: () => null,
 		getSessionSpawns: () => "*",
 		getArtifactsDir: () => null,
+	};
+}
+
+const opusModel = getBundledModel("anthropic", "claude-opus-4-7" as never) as Model;
+const opusString = `${opusModel.provider}/${opusModel.id}`;
+
+function makeSpawnModelSession(): ToolSession {
+	const modelRegistry = new ModelRegistry(createInMemoryAuthStorage(), "/nonexistent/spawn-model-models.yml");
+	vi.spyOn(modelRegistry, "getAvailable").mockReturnValue([opusModel]);
+	const base = makeSession();
+	return {
+		...base,
+		settings: Settings.isolated({
+			"task.maxConcurrency": 2,
+			"task.maxRecursionDepth": 2,
+			"task.isolation.enabled": false,
+			"task.enableLsp": false,
+			"task.spawnModelAliases": ["sonnet"],
+			modelRoles: { sonnet: opusString },
+		} as never),
+		modelRegistry,
 	};
 }
 
@@ -87,5 +113,32 @@ describe("runEvalWorkpool", () => {
 		await expect(runEvalWorkpool({ op: "wait", name: "scout-pool" }, { session })).rejects.toThrow(
 			'unknown workpool operation "wait"',
 		);
+	});
+
+	it("workpool create forwards model to policy and every worker", async () => {
+		vi.spyOn(discovery, "discoverAgents").mockResolvedValue({ agents: [SCOUT], projectAgentsDir: null });
+		const policySpy = vi.spyOn(structuredSubagent, "resolveEffectiveSubagentPolicy");
+		const dispatched = Promise.withResolvers<void>();
+		const runSpy = vi.spyOn(structuredSubagent, "runStructuredSubagent").mockImplementation(async () => {
+			dispatched.resolve();
+			throw new Error("stop");
+		});
+		const session = makeSpawnModelSession();
+
+		const created = await runEvalWorkpool({ op: "create", agent: "scout", model: "@sonnet" }, { session });
+		expect(policySpy.mock.calls[0]?.[0].spawnModel).toBe("@sonnet");
+		await runEvalWorkpool({ op: "push", name: (created as { name: string }).name, items: ["a"] }, { session });
+		await dispatched.promise;
+		expect(runSpy.mock.calls[0]?.[0].spawnModel).toBe("@sonnet");
+	});
+
+	it("workpool create rejects a bad model", async () => {
+		vi.spyOn(discovery, "discoverAgents").mockResolvedValue({ agents: [SCOUT], projectAgentsDir: null });
+		const session = makeSpawnModelSession();
+
+		await expect(runEvalWorkpool({ op: "create", agent: "scout", model: "@solx" }, { session })).rejects.toThrow(
+			"Unknown model alias",
+		);
+		expect(WorkPoolRegistry.global().get("Main", "scout-pool")).toBeUndefined();
 	});
 });

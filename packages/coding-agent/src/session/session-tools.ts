@@ -87,6 +87,8 @@ export interface SessionToolsHost {
 	evalPreludes(): readonly EvalPreludeDefinition[];
 	/** Live user-tagged model agents; candidates for the next base rebuild's advertised snapshot. */
 	sessionAgents(): readonly AgentDefinition[];
+	/** Live spawn model alias table; candidate for the next base rebuild's advertised snapshot. */
+	spawnModelAliasTable(): string;
 	/** Publishes the current Codex Code Mode tool exposure snapshot for turn metadata; undefined clears it. */
 	setCodeModeNamespacesInfo?(info: unknown): void;
 }
@@ -263,6 +265,8 @@ interface PromptSurface {
 	evalPreludes: readonly EvalPreludeDefinition[];
 	/** User-tagged model agents listed in the task description. */
 	sessionAgents: readonly AgentDefinition[];
+	/** Spawn model alias table listed in the task description. */
+	spawnModelAliasTable: string;
 }
 
 interface PendingNoticePreview<T> {
@@ -534,12 +538,18 @@ export class SessionTools {
 		return (this.#promptSurfaceScope.getStore() ?? this.#promptSurface).sessionAgents;
 	}
 
+	/** Spawn model alias table frozen into the base prompt surface. */
+	get advertisedSpawnModelAliasTable(): string {
+		return (this.#promptSurfaceScope.getStore() ?? this.#promptSurface).spawnModelAliasTable;
+	}
+
 	/** Derives the candidate surface from live state without publishing it. */
 	#derivePromptSurface(): PromptSurface {
 		return {
 			skillHintVisible: cfgSkillful.get(this.#host.settings) === true && (this.#skills?.length ?? 0) > 0,
 			evalPreludes: this.#host.evalPreludes(),
 			sessionAgents: this.#host.sessionAgents(),
+			spawnModelAliasTable: this.#host.spawnModelAliasTable(),
 		};
 	}
 	/** Drops cached per-session ACP `allow_always`/`reject_always` decisions. */
@@ -1218,6 +1228,7 @@ export class SessionTools {
 					...candidate,
 					evalPreludes: this.#promptSurface.evalPreludes,
 					sessionAgents: this.#promptSurface.sessionAgents,
+					spawnModelAliasTable: this.#promptSurface.spawnModelAliasTable,
 				});
 				const freezeImplicitPromptRefresh =
 					!forcePromptRefresh &&

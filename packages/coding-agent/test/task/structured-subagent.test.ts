@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import path from "node:path";
+import type { Model } from "@oh-my-pi/pi-ai";
+import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
+import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { AgentCompactionThresholdOverride } from "@oh-my-pi/pi-coding-agent/config/compaction-threshold";
 import type { BeforeSubagentSpawnEvent } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
@@ -24,6 +27,7 @@ import {
 import type { AgentDefinition } from "@oh-my-pi/pi-coding-agent/task/types";
 import type { SingleResult } from "@oh-my-pi/pi-tui/tools/task";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
+import { createInMemoryAuthStorage } from "../helpers/agent-session-setup";
 
 import { cfgRetryModelFallback } from "@oh-my-pi/pi-coding-agent/session/settings";
 import { cfgTaskAgentModelOverrides, cfgTaskEnableEffort } from "@oh-my-pi/pi-coding-agent/task/settings";
@@ -50,6 +54,7 @@ function session(
 		agentServiceTierOverrides?: Record<string, string>;
 		agentCompactionThresholdOverrides?: Record<string, AgentCompactionThresholdOverride>;
 		sessionAgents?: readonly AgentDefinition[];
+		modelRegistry?: ModelRegistry;
 	} = {},
 ): ToolSession {
 	return {
@@ -72,6 +77,7 @@ function session(
 					? { "task.agentCompactionThresholdOverrides": options.agentCompactionThresholdOverrides }
 					: {}),
 			}),
+		modelRegistry: options.modelRegistry,
 		getSessionFile: () => null,
 		getSessionSpawns: () => "*",
 		getSessionAgents: () => options.sessionAgents ?? [],
@@ -108,6 +114,21 @@ function result(): SingleResult {
 
 function mockDiscovery(agent: AgentDefinition = AGENT): void {
 	vi.spyOn(discoveryModule, "discoverAgents").mockResolvedValue({ agents: [agent], projectAgentsDir: null });
+}
+
+const opusModel = getBundledModel("anthropic", "claude-opus-4-7" as never) as Model;
+const opusString = `${opusModel.provider}/${opusModel.id}`;
+
+function spawnModelSession(): ToolSession {
+	const modelRegistry = new ModelRegistry(createInMemoryAuthStorage(), "/nonexistent/spawn-model-models.yml");
+	vi.spyOn(modelRegistry, "getAvailable").mockReturnValue([opusModel]);
+	return session({
+		modelRegistry,
+		settings: Settings.isolated({
+			"task.spawnModelAliases": ["sonnet"],
+			modelRoles: { sonnet: opusString },
+		} as never),
+	});
 }
 
 afterEach(() => {
@@ -481,6 +502,91 @@ describe("structured subagent primitive", () => {
 			},
 		]);
 		await fs.rm(settled.artifactsDir, { recursive: true, force: true });
+	});
+
+	it("spawn model beats agentModelOverrides and frontmatter model", async () => {
+		mockDiscovery({ ...AGENT, model: ["openai/gpt-4o"] });
+		const childSession = spawnModelSession();
+		cfgTaskAgentModelOverrides.override(childSession.settings, { worker: "anthropic/claude-haiku-4-5" });
+
+		const policy = await resolveEffectiveSubagentPolicy(
+			request({ session: childSession, spawnModel: "@sonnet:high" }),
+		);
+
+		expect(policy.modelOverride).toEqual([`${opusString}:high`]);
+		expect(policy.effectiveAgent.systemPrompt).toBe(AGENT.systemPrompt);
+		expect(policy.effectiveAgent.tools).toEqual(AGENT.tools);
+	});
+
+	it("spawn alias selects the alias role; a concrete selector selects none", async () => {
+		mockDiscovery();
+		const aliasPolicy = await resolveEffectiveSubagentPolicy(
+			request({ session: spawnModelSession(), spawnModel: "@sonnet:high" }),
+		);
+		expect(aliasPolicy.modelRole).toBe("sonnet");
+		const concretePolicy = await resolveEffectiveSubagentPolicy(
+			request({ session: spawnModelSession(), spawnModel: `${opusString}:high` }),
+		);
+		expect(concretePolicy.modelRole).toBeUndefined();
+	});
+
+	it("invalid spawn model fails preflight without running", async () => {
+		mockDiscovery();
+		const run = vi.spyOn(executorModule, "runSubprocess");
+		const error = await runStructuredSubagent(request({ session: spawnModelSession(), spawnModel: "@solx" })).catch(
+			(cause: unknown) => cause,
+		);
+		expect(error).toBeInstanceOf(StructuredSubagentError);
+		expect(error as StructuredSubagentError).toMatchObject({
+			kind: "preflight",
+			message: 'Unknown model alias "@solx". Available: @sonnet',
+		});
+		expect(run).not.toHaveBeenCalled();
+		expect(artifactsDirsFromRegistry()).toEqual([]);
+	});
+
+	it("executor receives spawnModel flag", async () => {
+		mockDiscovery();
+		const dispatched: executorModule.ExecutorOptions[] = [];
+		vi.spyOn(executorModule, "runSubprocess").mockImplementation(async options => {
+			dispatched.push(options);
+			return result();
+		});
+		for (const spawnModel of ["@sonnet:high", "@sonnet", undefined]) {
+			const settled = await runStructuredSubagent(
+				request({ session: spawnModelSession(), spawnModel, retainArtifacts: true }),
+			);
+			await fs.rm(settled.artifactsDir, { recursive: true, force: true });
+		}
+		expect(dispatched.map(options => options.spawnModel)).toEqual([
+			{ effortSuffix: true },
+			{ effortSuffix: false },
+			undefined,
+		]);
+	});
+
+	it("before_subagent_spawn still replaces an explicit spawn model", async () => {
+		mockDiscovery();
+		const childSession = spawnModelSession();
+		childSession.emitBeforeSubagentSpawn = async () => ({ model: "openai/gpt-4o" });
+		const dispatched: executorModule.ExecutorOptions[] = [];
+		vi.spyOn(executorModule, "runSubprocess").mockImplementation(async options => {
+			dispatched.push(options);
+			return result();
+		});
+		const settled = await runStructuredSubagent(
+			request({ session: childSession, spawnModel: "@sonnet:high", retainArtifacts: true }),
+		);
+		expect(dispatched[0]?.modelOverride).toEqual(["openai/gpt-4o"]);
+		expect(dispatched[0]?.spawnModel).toBeUndefined();
+		await fs.rm(settled.artifactsDir, { recursive: true, force: true });
+	});
+
+	it("internal request.model stays unvalidated", async () => {
+		mockDiscovery();
+		const policy = await resolveEffectiveSubagentPolicy(request({ model: "some/unknown-model" }));
+		expect(policy.modelOverride).toEqual(["some/unknown-model"]);
+		expect(policy.spawnModel).toBeUndefined();
 	});
 
 	it("rejects dispatch before leasing artifacts when an extension blocks the spawn", async () => {

@@ -407,6 +407,11 @@ export interface ToolSession {
 	 * hidden notice. Absent when the embedder has no base-prompt surface.
 	 */
 	advertisedSessionAgents?: () => readonly AgentDefinition[];
+	/**
+	 * Spawn model alias table baked into the current base prompt surface; the
+	 * task description lists this instead of recomputing from live settings.
+	 */
+	advertisedSpawnModelAliasTable?: () => string;
 	/** Get resolved model string if explicitly set for this session */
 	getModelString?: () => string | undefined;
 	/** Get the current session model string, regardless of how it was chosen */

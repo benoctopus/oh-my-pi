@@ -1,6 +1,11 @@
 import { afterAll, afterEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import type { Model } from "@oh-my-pi/pi-ai";
+import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
+import { ModelRegistry } from "../../src/config/model-registry";
+import * as structuredSubagent from "../../src/task/structured-subagent";
+import { createInMemoryAuthStorage } from "../helpers/agent-session-setup";
 import { TempDir } from "@oh-my-pi/pi-utils";
 import { AsyncJobManager } from "../../src/async";
 import { Settings } from "../../src/config/settings";
@@ -118,6 +123,26 @@ function makeSession(options: SessionOptions = {}): ToolSession {
 						planFilePath: path.join(options.cwd ?? process.cwd(), "plan.md"),
 					}) satisfies PlanModeState
 			: undefined,
+	};
+}
+
+const opusModel = getBundledModel("anthropic", "claude-opus-4-7" as never) as Model;
+const opusString = `${opusModel.provider}/${opusModel.id}`;
+
+function makeSpawnModelSession(): ToolSession {
+	const modelRegistry = new ModelRegistry(createInMemoryAuthStorage(), "/nonexistent/spawn-model-models.yml");
+	vi.spyOn(modelRegistry, "getAvailable").mockReturnValue([opusModel]);
+	return {
+		...makeSession({
+			settings: Settings.isolated({
+				"async.enabled": false,
+				"task.isolation.enabled": false,
+				"task.enableLsp": true,
+				"task.spawnModelAliases": ["sonnet"],
+				modelRoles: { sonnet: opusString },
+			} as never),
+		}),
+		modelRegistry,
 	};
 }
 
@@ -341,19 +366,30 @@ describe("runEvalAgent", () => {
 		expect(secondOptions.outputSchemaOverridesAgent).toBeUndefined();
 	});
 
-	it("drops a per-call model argument on agent() (removed, issue #6438)", async () => {
+	it("agent() forwards model as spawnModel", async () => {
 		mockAgents();
 		const runSpy = vi.spyOn(taskExecutor, "runSubprocess").mockImplementation(async options => singleResult(options));
+		const policySpy = vi.spyOn(structuredSubagent, "resolveEffectiveSubagentPolicy");
+		const runStructuredSpy = vi.spyOn(structuredSubagent, "runStructuredSubagent");
 
-		// The schema strips unknown keys; a legacy `model` argument is silently
-		// discarded so resolution is identical to omitting it — the agent's own
-		// frontmatter model applies (issue #6438).
-		await runEvalAgentAndWait({ prompt: "work", model: "default" }, { session: makeSession() });
-		await runEvalAgentAndWait({ prompt: "work" }, { session: makeSession() });
+		await runEvalAgentAndWait({ prompt: "work", model: "@sonnet:high" }, { session: makeSpawnModelSession() });
 
-		const withModel = runSpy.mock.calls[0]?.[0];
-		const withoutModel = runSpy.mock.calls[1]?.[0];
-		expect(withModel?.modelOverride).toEqual(withoutModel?.modelOverride);
+		expect(policySpy.mock.calls[0]?.[0].spawnModel).toBe("@sonnet:high");
+		expect(runStructuredSpy.mock.calls[0]?.[0].spawnModel).toBe("@sonnet:high");
+		expect(runSpy.mock.calls[0]?.[0].modelOverride).toEqual([`${opusString}:high`]);
+	});
+
+	it("agent() rejects a bad model at preflight", async () => {
+		mockAgents();
+		const runSpy = vi.spyOn(taskExecutor, "runSubprocess").mockImplementation(async options => singleResult(options));
+		const session = makeSpawnModelSession();
+		const registerSpy = vi.spyOn(session.asyncJobManager!, "register");
+
+		await expect(runEvalAgent({ prompt: "work", model: "@solx" }, { session })).rejects.toThrow(
+			"Unknown model alias",
+		);
+		expect(registerSpy).not.toHaveBeenCalled();
+		expect(runSpy).not.toHaveBeenCalled();
 	});
 	it("returns host-parsed data for caller, agent, and inherited schemas", async () => {
 		const agentSchema = { type: "object" };

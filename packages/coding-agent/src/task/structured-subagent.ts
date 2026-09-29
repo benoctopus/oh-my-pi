@@ -44,6 +44,7 @@ import {
 } from "./isolation-runner";
 import { generateTaskName } from "./name-generator";
 import { AgentOutputManager } from "./output-manager";
+import { resolveSpawnModel, SpawnModelError, type SpawnModelSelection } from "./spawn-model";
 import { resolveSpawnPolicy } from "./spawn-policy";
 import { type AgentDefinition, canSpawnAtDepth } from "./types";
 import type {
@@ -106,6 +107,8 @@ export interface StructuredSubagentRequest {
 	context?: string;
 	agent?: string;
 	model?: string | string[];
+	/** Validated per-spawn model selector (`@alias[:effort]` or `provider/id[:effort]`); beats every configured model source. */
+	spawnModel?: string;
 	/** Presence, rather than truthiness, makes this the highest-priority schema. */
 	outputSchema?: unknown;
 	schemaMode?: StructuredSubagentSchemaMode;
@@ -159,6 +162,8 @@ export interface EffectiveSubagentPolicy {
 	modelRole?: string;
 	/** Extension routing note explaining a `before_subagent_spawn` model replacement. */
 	modelRoute?: string;
+	/** Resolved per-spawn model selection; cleared when `before_subagent_spawn` replaces the model. */
+	spawnModel?: SpawnModelSelection;
 	/** Exact-name `task.agentServiceTierOverrides` entry for this agent, applied after model resolution. */
 	serviceTierOverride?: ServiceTierInheritSettingValue;
 	/** Exact-name entry normalized to both child compaction threshold fields. */
@@ -346,8 +351,21 @@ export async function resolveEffectiveSubagentPolicy(
 		? compactionThresholdOverrides[agentName]
 		: undefined;
 	const parentActiveModelPattern = request.session.getActiveModelString?.();
+	let spawnModel: SpawnModelSelection | undefined;
+	if (request.spawnModel !== undefined) {
+		try {
+			spawnModel = resolveSpawnModel(request.spawnModel, {
+				settings: request.session.settings,
+				modelRegistry: request.session.modelRegistry,
+				coarseEffort: request.effort,
+			});
+		} catch (err) {
+			if (err instanceof SpawnModelError) throw new StructuredSubagentError("preflight", err.message);
+			throw err;
+		}
+	}
 	const modelResolution = {
-		requestModel: request.model,
+		requestModel: spawnModel ? spawnModel.patterns : request.model,
 		settingsOverride: agentModelOverrides[agentName],
 		agentModel: effectiveAgent.model,
 		settings: request.session.settings,
@@ -356,8 +374,10 @@ export async function resolveEffectiveSubagentPolicy(
 	};
 	// Role identity and patterns come from one call so they cannot be derived
 	// from different sources: the expansion below discards the alias, and the
-	// child's inherited retry-fallback chain is keyed off the role.
-	const { patterns: modelOverride, role: modelRole } = resolveAgentModelSelection(modelResolution);
+	// child's inherited retry-fallback chain is keyed off the role. A spawn
+	// `@alias` selector supplies its own role so `retry.fallbackChains.<alias>` applies.
+	const { patterns: modelOverride, role: resolvedRole } = resolveAgentModelSelection(modelResolution);
+	const modelRole = spawnModel ? spawnModel.role : resolvedRole;
 	const isolationEnabled = cfgTaskIsolationEnabled.get(request.session.settings);
 	const isIsolated = request.isolation?.requested === true;
 	if (isIsolated && !isolationEnabled) {
@@ -373,6 +393,7 @@ export async function resolveEffectiveSubagentPolicy(
 		effectiveAgent,
 		modelOverride,
 		modelRole,
+		spawnModel,
 		serviceTierOverride,
 		compactionThresholdOverride,
 		parentActiveModelPattern,
@@ -427,7 +448,7 @@ async function applySpawnHook(
 	if (spawnResult?.model === undefined) return policy;
 	const replacement = resolveConfiguredModelPatterns(spawnResult.model, request.session.settings);
 	if (replacement.length === 0) return policy;
-	return { ...policy, modelOverride: replacement, modelRoute: spawnResult.note };
+	return { ...policy, modelOverride: replacement, modelRoute: spawnResult.note, spawnModel: undefined };
 }
 
 /** Reserve a session-global agent id only after preflight has succeeded. */
@@ -508,6 +529,7 @@ function buildExecutorOptions(
 		modelOverride: policy.modelOverride,
 		modelRole: policy.modelRole,
 		modelRoute: policy.modelRoute,
+		spawnModel: policy.spawnModel ? { effortSuffix: policy.spawnModel.effort !== undefined } : undefined,
 		serviceTierOverride: policy.serviceTierOverride,
 		compactionThresholdOverride: policy.compactionThresholdOverride,
 		parentActiveModelPattern: policy.parentActiveModelPattern,

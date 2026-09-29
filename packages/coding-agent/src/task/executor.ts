@@ -467,6 +467,8 @@ export interface ExecutorOptions {
 	 */
 	parentActiveModelPattern?: string;
 	thinkingLevel?: ConfiguredThinkingLevel;
+	/** Present when a validated per-spawn model selection drives the child; `effortSuffix` means the selector carried its own effort. */
+	spawnModel?: { effortSuffix: boolean };
 	/** Caller-requested coarse effort (`lo`/`med`/`hi`); maps onto the resolved model's supported thinking range and wins over {@link thinkingLevel}. */
 	effort?: TaskEffort;
 	/** Caller's description of how open-ended the work is; rides the initial prompt into the child's `auto` thinking classifier. */
@@ -3739,7 +3741,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			} = await awaitAbortable(
 				resolveModelOverrideWithAuthFallback(
 					modelPatterns,
-					options.parentActiveModelPattern,
+					options.spawnModel ? undefined : options.parentActiveModelPattern,
 					modelRegistry,
 					settings,
 					id,
@@ -3797,7 +3799,10 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			// through to the normal selectors below.
 			// The ceiling outlives initial resolution: it rides into the session so
 			// retry-fallback recovery can never clamp effort back up past it.
-			const spawnEffortCeiling = options.effort !== undefined ? cfgTaskMaxEffort.get(settings) : undefined;
+			const spawnEffortCeiling =
+				options.effort !== undefined || options.spawnModel?.effortSuffix
+					? cfgTaskMaxEffort.get(settings)
+					: undefined;
 			const effortLevel =
 				options.effort !== undefined
 					? resolveTaskEffortLevel(model, options.effort, spawnEffortCeiling)
@@ -3932,7 +3937,9 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				model,
 				modelPattern: model || modelOverride === undefined ? undefined : modelPatterns,
 				modelPatternAuthFallback:
-					model || modelOverride === undefined ? undefined : options.parentActiveModelPattern,
+					model || modelOverride === undefined || options.spawnModel
+						? undefined
+						: options.parentActiveModelPattern,
 				modelPatternFallbackRole:
 					model || modelOverride === undefined ? undefined : `${SUBAGENT_RETRY_FALLBACK_ROLE_PREFIX}${id}`,
 				modelPatternDefaultFallbackChain:

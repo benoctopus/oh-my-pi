@@ -61,6 +61,32 @@ describe("task schema (single-spawn)", () => {
 	});
 });
 
+describe("task schema spawn model field", () => {
+	const shapes = [
+		{ batchEnabled: false, build: (model: unknown) => ({ agent: "scout", task: "t", solutionSpace: "c", model }) },
+		{
+			batchEnabled: true,
+			build: (model: unknown) => ({
+				context: "ctx",
+				tasks: [{ agent: "scout", task: "t", solutionSpace: "c", model }],
+			}),
+		},
+	];
+
+	it.each(shapes)("present only when spawnModelEnabled (batch=$batchEnabled)", ({ batchEnabled, build }) => {
+		const on = getTaskSchema({ isolationEnabled: false, batchEnabled, spawnModelEnabled: true });
+		const enabled = on(build("@sonnet"));
+		expect(enabled instanceof type.errors).toBe(false);
+		expect(JSON.stringify(enabled)).toContain("@sonnet");
+		for (const bad of ["", ["@a"]]) expect(on(build(bad)) instanceof type.errors).toBe(true);
+
+		const off = getTaskSchema({ isolationEnabled: false, batchEnabled, spawnModelEnabled: false });
+		const disabled = off(build("@sonnet"));
+		expect(disabled instanceof type.errors).toBe(false);
+		expect(JSON.stringify(disabled)).not.toContain("@sonnet");
+	});
+});
+
 describe("task spawn validation", () => {
 	afterEach(() => {
 		vi.restoreAllMocks();

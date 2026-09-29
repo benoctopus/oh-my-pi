@@ -232,6 +232,31 @@ export const cfgTaskEnableEffort = register({
 	},
 });
 
+export const cfgTaskSpawnModel = register({
+	id: "task.spawnModel",
+	type: "boolean",
+	default: true,
+	ui: {
+		tab: "tasks",
+		group: "Subagents",
+		label: "Per-Task Model",
+		description:
+			"Expose the optional model parameter on task spawns, allowing callers to pick an allowed model alias or concrete model per subagent",
+	},
+});
+
+export const cfgTaskSpawnModelAliases = register({
+	id: "task.spawnModelAliases",
+	type: "array",
+	default: [] as string[],
+	ui: {
+		tab: "tasks",
+		group: "Subagents",
+		label: "Spawn Model Aliases",
+		description: "Model role names callers may select as @<alias>[:<effort>] when spawning a subagent",
+	},
+});
+
 export const cfgTaskMaxConcurrency = register({
 	id: "task.maxConcurrency",
 	protocolDefault: ["rpc", "acp"],

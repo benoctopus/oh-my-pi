@@ -75,6 +75,7 @@ import {
 	cfgTaskMaxConcurrency,
 	cfgTaskMaxRecursionDepth,
 	cfgTaskMaxRuntimeMs,
+	cfgTaskSpawnModel,
 	cfgTaskSpeculativeLaunch,
 } from "./settings";
 
@@ -147,6 +148,8 @@ interface TaskDescriptionOptions {
 	disabledAgents: string[];
 	batchEnabled: boolean;
 	effortEnabled: boolean;
+	spawnModelEnabled: boolean;
+	spawnModelAliasTable: string;
 	evalToolsEnabled: boolean;
 	asyncEnabled: boolean;
 	ircEnabled: boolean;
@@ -182,6 +185,8 @@ function renderDescription(options: TaskDescriptionOptions): string {
 		applyIsolatedChanges: options.applyIsolatedChanges,
 		batchEnabled: options.batchEnabled,
 		effortEnabled: options.effortEnabled,
+		spawnModelEnabled: options.spawnModelEnabled,
+		spawnModelAliasTable: options.spawnModelAliasTable,
 		evalToolsEnabled: options.evalToolsEnabled,
 		asyncEnabled: options.asyncEnabled,
 		hasBlockingAgents: renderedAgents.some(agent => agent.blocking),
@@ -290,6 +295,7 @@ function resolveSpawnItems(params: TaskParams): TaskItem[] {
 	if ("schemaMode" in params) item.schemaMode = params.schemaMode;
 	if ("tools" in params) item.tools = params.tools;
 	if ("effort" in params) item.effort = params.effort;
+	if ("model" in params) item.model = params.model;
 	if ("isolated" in params) item.isolated = params.isolated;
 	return [item];
 }
@@ -313,6 +319,7 @@ function spawnParamsFor(params: TaskParams, item: TaskItem, defaultAgent: string
 	if ("schemaMode" in item) spawn.schemaMode = item.schemaMode;
 	if ("tools" in item) spawn.tools = item.tools;
 	if ("effort" in item) spawn.effort = item.effort;
+	if ("model" in item) spawn.model = item.model;
 	if (item.isolated !== undefined) {
 		spawn.isolated = item.isolated;
 	} else if ("isolated" in params) {
@@ -665,6 +672,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			isolationEnabled,
 			batchEnabled: this.#isBatchEnabled(),
 			effortEnabled: cfgTaskEnableEffort.get(this.session.settings),
+			spawnModelEnabled: cfgTaskSpawnModel.get(this.session.settings),
 			evalToolsEnabled: evalToolsEnabled(this.session),
 			defaultAgent: this.#defaultAgent(),
 		});
@@ -689,6 +697,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			disabledAgents,
 			batchEnabled: this.#isBatchEnabled(),
 			effortEnabled: cfgTaskEnableEffort.get(this.session.settings),
+			spawnModelEnabled: cfgTaskSpawnModel.get(this.session.settings),
+			spawnModelAliasTable: this.session.advertisedSpawnModelAliasTable?.() ?? "",
 			evalToolsEnabled: evalToolsEnabled(this.session),
 			asyncEnabled: cfgAsyncEnabled.get(this.session.settings),
 			ircEnabled: isIrcEnabled(this.session.settings, this.session.taskDepth ?? 0),
@@ -802,6 +812,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			...(Object.hasOwn(params, "outputSchema") ? { outputSchema: params.outputSchema } : {}),
 			...(Object.hasOwn(params, "schemaMode") ? { schemaMode: params.schemaMode } : {}),
 			...(params.effort !== undefined ? { effort: params.effort } : {}),
+			...(params.model !== undefined ? { spawnModel: params.model } : {}),
 			...("isolated" in params ? { isolation: { requested: params.isolated } } : {}),
 			blockedAgent: this.#blockedAgent,
 			enableLsp: (this.session.enableLsp ?? true) && cfgTaskEnableLsp.get(this.session.settings),
@@ -1606,6 +1617,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 				...(Object.hasOwn(params, "outputSchema") ? { outputSchema: params.outputSchema } : {}),
 				...(Object.hasOwn(params, "schemaMode") ? { schemaMode: params.schemaMode } : {}),
 				...(params.effort !== undefined ? { effort: params.effort } : {}),
+				...(params.model !== undefined ? { spawnModel: params.model } : {}),
 				solutionSpace: params.solutionSpace,
 				...(params.tools?.length
 					? {

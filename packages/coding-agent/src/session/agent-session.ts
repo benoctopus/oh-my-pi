@@ -132,6 +132,7 @@ import type { EvalPreludeDefinition } from "../eval/preludes";
 import type { PythonResult } from "../eval/py/executor";
 import { formatEvalStateContext } from "../eval/state";
 import { WorkPoolRegistry } from "../task/workpool";
+import { buildSpawnModelAliasGroups, formatSpawnModelAliasTable } from "../task/spawn-model";
 import type { BashPtyOptions, BashResult } from "../exec/bash-executor";
 import type { TtsrManager } from "../export/ttsr";
 import type { LoadedCustomCommand } from "../extensibility/custom-commands";
@@ -1847,6 +1848,8 @@ export class AgentSession implements SettingsScope {
 			localProtocolOptions: () => this.#localProtocolOptions(),
 			evalPreludes: () => this.getEvalPreludes(),
 			sessionAgents: () => this.getSessionAgents(),
+			spawnModelAliasTable: () =>
+				formatSpawnModelAliasTable(buildSpawnModelAliasGroups(this.settings, this.#modelRegistry)),
 		};
 		this.#tools = new SessionTools(sessionToolsHost, {
 			autoApprove: config.autoApprove,
@@ -6082,6 +6085,15 @@ export class AgentSession implements SettingsScope {
 	 */
 	getAdvertisedSessionAgents(): readonly AgentDefinition[] {
 		return this.#tools.advertisedSessionAgents;
+	}
+
+	/**
+	 * Spawn model alias table frozen into the task description (see
+	 * {@link SessionTools.advertisedSpawnModelAliasTable}). Alias changes take
+	 * effect at the next base-prompt rebuild.
+	 */
+	getAdvertisedSpawnModelAliasTable(): string {
+		return this.#tools.advertisedSpawnModelAliasTable;
 	}
 
 	/** Cancels the local rollout-memory startup owned by this session. */

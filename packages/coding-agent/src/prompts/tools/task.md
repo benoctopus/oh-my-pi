@@ -14,6 +14,11 @@ Shared edits need one integration owner{{#if ircEnabled}}; siblings coordinate v
 `solutionSpace`: describe how open-ended the child's problem is: whether the fix or design is given, or which causes or designs remain open. Volume of work does not widen it; NEVER mention sibling agents or coordination. (`one fix: rename, names given`; `one fix: slice end in paginate`; `single-flight cache load; races easy to miss`; `several retry API shapes; error classes to choose`; `deadlock cause open, no repro`)
 {{#if evalToolsEnabled}}`tools`: eval-defined, run in your kernel.
 {{/if}}{{#if effortEnabled}}`effort`: `"lo"`|`"med"`|`"hi"` by how open-ended the problem is.
+{{/if}}{{#if spawnModelEnabled}}`model`: optional "@alias[:effort]". Set ONLY when the user names a model for this spawn.
+Map the user's wording ("glm flash", "gpt sol", "Sonnet", "high effort") to an alias and literal effort.
+Unlisted or ambiguous model, or an effort the model lacks: ask the user; never guess.
+{{#if spawnModelAliasTable}}{{{spawnModelAliasTable}}}
+{{/if}}
 {{/if}}`schemaMode`: default permissive warns after retries; strict fails.
 {{#if isolationEnabled}}{{#if applyIsolatedChanges}}`isolated`: worktree; successful changes apply to parent.
 {{else}}`isolated`: worktree; changes retained, not applied.

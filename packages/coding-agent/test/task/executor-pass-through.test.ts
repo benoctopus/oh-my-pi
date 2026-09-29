@@ -419,6 +419,78 @@ describe("runSubprocess parent-discovery pass-through (issue #2190)", () => {
 		expect(spy.mock.calls[0]?.[0]?.thinkingLevelCeiling).toBe(Effort.Low);
 	});
 
+	it("arms task.maxEffort ceiling for a spawn model effort suffix", async () => {
+		const model = getBundledModel("openai-codex", "gpt-5.6-sol");
+		if (!model) throw new Error("Expected gpt-5.6-sol model to exist");
+		const settings = Settings.isolated({ "task.maxEffort": "high" });
+		const session = yieldEmittingSession();
+		const spy = vi.spyOn(sdkModule, "createAgentSession").mockResolvedValue(createSessionResult(session));
+
+		const result = await runSubprocess({
+			...baseOptions,
+			id: "spawn-model-suffix-ceiling",
+			modelOverride: [`${model.provider}/${model.id}:high`],
+			spawnModel: { effortSuffix: true },
+			settings,
+			modelRegistry: createModelRegistry(model),
+		});
+
+		expect(result.exitCode).toBe(0);
+		expect(spy.mock.calls[0]?.[0]?.thinkingLevelCeiling).toBe(Effort.High);
+		expect(spy.mock.calls[0]?.[0]?.thinkingLevel).toBe(Effort.High);
+	});
+
+	it("does not arm the ceiling for a spawn model without suffix", async () => {
+		const model = getBundledModel("openai-codex", "gpt-5.6-sol");
+		if (!model) throw new Error("Expected gpt-5.6-sol model to exist");
+		const settings = Settings.isolated({ "task.maxEffort": "high" });
+		const session = yieldEmittingSession();
+		const spy = vi.spyOn(sdkModule, "createAgentSession").mockResolvedValue(createSessionResult(session));
+
+		const result = await runSubprocess({
+			...baseOptions,
+			id: "spawn-model-no-suffix-ceiling",
+			modelOverride: [`${model.provider}/${model.id}`],
+			spawnModel: { effortSuffix: false },
+			settings,
+			modelRegistry: createModelRegistry(model),
+		});
+
+		expect(result.exitCode).toBe(0);
+		expect(spy.mock.calls[0]?.[0]?.thinkingLevelCeiling).toBeUndefined();
+	});
+
+	it("explicit spawn model never falls back to the parent model", async () => {
+		const parent = getBundledModel("openai-codex", "gpt-5.6-sol");
+		if (!parent) throw new Error("Expected gpt-5.6-sol model to exist");
+		const unauthed = { ...parent, id: "unauthed-spawn", provider: "mock-unauthed" } as Model;
+		const registry = createModelRegistry([parent, unauthed], async model =>
+			model.provider === parent.provider ? "test-key" : undefined,
+		);
+		const parentPattern = `${parent.provider}/${parent.id}`;
+		const run = (id: string, spawnModel?: { effortSuffix: boolean }) =>
+			runSubprocess({
+				...baseOptions,
+				id,
+				modelOverride: [`${unauthed.provider}/${unauthed.id}`],
+				parentActiveModelPattern: parentPattern,
+				spawnModel,
+				modelRegistry: registry,
+			});
+
+		const spy = vi
+			.spyOn(sdkModule, "createAgentSession")
+			.mockResolvedValue(createSessionResult(yieldEmittingSession()));
+		await run("spawn-model-fallback-control");
+		expect(spy.mock.calls[0]?.[0]?.model?.id).toBe(parent.id);
+
+		spy.mockClear();
+		await run("spawn-model-no-fallback", { effortSuffix: false });
+		const forwarded = spy.mock.calls[0]?.[0];
+		expect(forwarded?.model?.id).not.toBe(parent.id);
+		expect(forwarded?.modelPatternAuthFallback).toBeUndefined();
+	});
+
 	it("rejects a spawn when task.maxEffort is below the model floor", async () => {
 		const baseModel = getBundledModel("openai-codex", "gpt-5.6-sol");
 		if (!baseModel) throw new Error("Expected gpt-5.6-sol model to exist");
