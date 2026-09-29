@@ -43,7 +43,7 @@ Status: approved in brainstorming; pending written-spec review
 
 **Value**: exactly one selector string, either `@<alias>` or `@<alias>:<effort>`, or a concrete catalog selector `provider/id` optionally with `:<effort>`. Arrays are rejected; fallback chains remain the job of `retry.fallbackChains`.
 
-**Wiring**: each surface forwards the value unchanged into `StructuredSubagentRequest.model`. No new precedence logic: the existing `requestModel` slot already outranks `task.agentModelOverrides` and frontmatter.
+**Wiring**: each surface forwards the value unchanged into a new `StructuredSubagentRequest.spawnModel` field. The existing `StructuredSubagentRequest.model` stays internal and unvalidated because `src/cleanse/agent.ts` passes arbitrary selectors through it. After validation (3.4), the validated patterns feed the existing `requestModel` slot. No new precedence logic: that slot already outranks `task.agentModelOverrides` and frontmatter.
 
 **Agent identity is unchanged.** The `agent` still supplies system prompt, tools, spawns, output schema, advisor, prewalk. `model` only replaces model and effort. Example: `{ agent: "reviewer", model: "@sonnet" }`.
 
@@ -99,6 +99,7 @@ All of these fail **preflight** (inside `resolveEffectiveSubagentPolicy`, before
 | Suffix effort above `task.maxEffort` | `Effort "max" exceeds task.maxEffort ("high").` |
 | `model` set while `task.spawnModel` is `false` | `Spawn model selection is disabled (task.spawnModel).` |
 | `model` is an array or empty string | schema validation error |
+| Session has no model registry (`ToolSession.modelRegistry` undefined) | `Spawn model selection needs a model registry.` |
 
 No silent fallback anywhere on the explicit-`model` path: the parent-model auth fallback used for unresolved patterns must not apply when the source is a spawn `model`. Runtime failures after a valid model starts (quota, auth, provider outage) keep today's behaviour (`retry.fallbackChains`, error attribution).
 
